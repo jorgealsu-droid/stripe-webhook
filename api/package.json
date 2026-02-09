@@ -1,0 +1,10 @@
+{
+  "name": "stripe-webhook",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "stripe": "^14.0.0",
+    "googleapis": "^128.0.0",
+    "micro": "^9.4.1"
+  }
+}
