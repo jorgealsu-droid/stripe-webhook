@@ -5,12 +5,6 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: "2023-10-16",
 });
 
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
-
 async function buffer(readable) {
   const chunks = [];
   for await (const chunk of readable) {
