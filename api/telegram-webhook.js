@@ -23,6 +23,22 @@ export default async function handler(req, res) {
       text === "start" ||
       text === "iniciar";
 
+    const TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
+
+    async function sendMessage(text, replyMarkup = null) {
+      const body = {
+        chat_id: chatId,
+        text,
+        parse_mode: "HTML",
+      };
+      if (replyMarkup) body.reply_markup = replyMarkup;
+
+      await fetch(`${TELEGRAM_API}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    }
 
     if (!isStart) {
       await sendMessage("Escribe <b>hola</b> o <b>/start</b> para comenzar 😊");
