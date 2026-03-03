@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "googleapis": "^131.0.0",
+    "firebase-admin": "^12.0.0",
+    "stripe": "^14.0.0",
     "node-fetch": "^3.3.2"
   }
 }
