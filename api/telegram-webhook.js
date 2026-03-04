@@ -27,7 +27,7 @@ export default async function handler(req, res) {
     if (isStart) {
       const keyboard = {
         inline_keyboard: [
-          [{ text: "💳 Acceso Premium", url: `https://${process.env.VERCEL_URL}/api/create-checkout?telegram_id=${telegramId}` }],
+          [{ text: "💳 Acceso Premium", url: \${process.env.BASE_URL}/api/create-checkout?telegram_id=${telegramId}],
           [{ text: "🆓 Saber más", callback_data: "info" }]
         ],
       };
