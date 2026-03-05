@@ -136,7 +136,7 @@ export default async function handler(req, res) {
       }
     }
 
-    // --- 4. MENÚ PRINCIPAL ---
+// --- 4. MENÚ PRINCIPAL Y FALLBACK ---
     if (isStart) {
       // Limpiar estado por si se quedó atascado por algún error anterior
       if (userData.state && userData.state !== "normal") {
@@ -145,13 +145,16 @@ export default async function handler(req, res) {
 
       const keyboard = {
         inline_keyboard: [
-          // Usa tu URL de Vercel real en lugar de BASE_URL si te da problemas
+          // Asegúrate de tener BASE_URL configurado en Vercel
           [{ text: "💳 Acceso Premium", url: `${process.env.BASE_URL}/api/create-checkout?telegram_id=${telegramId}` }],
           [{ text: "🎁 Acceso con cupón", callback_data: "enter_coupon" }]
         ],
       };
 
       await sendMessage(`¡Hola <b>${firstName}</b>! 🌿\n\nBienvenido. He registrado tu perfil. Elige cómo deseas acceder:`, keyboard);
+    } else {
+      // FALLBACK: Si el usuario escribe texto aleatorio sin estar en un proceso
+      await sendMessage("🤔 No entiendo ese comando.\n\nSi intentas usar un cupón, presiona primero el botón de <b>Acceso con cupón</b> en el menú principal.\n\nPresiona /start para volver a ver las opciones.");
     }
 
     return res.status(200).send("OK");
