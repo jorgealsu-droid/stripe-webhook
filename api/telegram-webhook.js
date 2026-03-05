@@ -20,6 +20,61 @@ export default async function handler(req, res) {
         await db.collection('users').doc(telegramId).update({
           state: "awaiting_coupon"
         });
+        
+      if (data === "recover_access") {
+        // 1. VERIFICACIÓN DE SEGURIDAD CRÍTICA (No confíes en el botón)
+        const userDoc = await db.collection('users').doc(telegramId).get();
+        const userData = userDoc.exists ? userDoc.data() : null;
+
+        if (!userData || (userData.status !== "premium" && userData.status !== "premium_coupon")) {
+          // El usuario intentó usar un botón viejo o su suscripción fue revocada
+          await fetch(`${TELEGRAM_API}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: "❌ <b>Acceso denegado.</b>\n\nNo tienes una suscripción activa en nuestra base de datos. Si crees que es un error, contacta a soporte o usa el menú principal con /start.",
+              parse_mode: "HTML"
+            }),
+          });
+        } else {
+          // 2. Generar un NUEVO enlace de UN SOLO USO
+          const linkResponse = await fetch(`${TELEGRAM_API}/createChatInviteLink`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: CHANNEL_ID,
+              member_limit: 1,
+              name: `Recuperación: ${telegramId}`
+            }),
+          });
+          
+          const linkData = await linkResponse.json();
+
+          if (linkData.ok) {
+            await fetch(`${TELEGRAM_API}/sendMessage`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                chat_id: chatId,
+                text: `🔄 <b>Acceso recuperado</b>\n\nAquí tienes tu nuevo enlace único para unirte al canal privado. Úsalo de inmediato (no lo compartas):\n\n${linkData.result.invite_link}`,
+                parse_mode: "HTML"
+              }),
+            });
+          } else {
+            console.error("Error Telegram API al recuperar:", linkData);
+            await fetch(`${TELEGRAM_API}/sendMessage`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                chat_id: chatId,
+                text: "⚠️ <b>Error técnico.</b>\n\nEres usuario Premium, pero hubo un fallo al generar tu invitación. Por favor, inténtalo más tarde."
+              }),
+            });
+          }
+        }
+      }
+        
 
         await fetch(`${TELEGRAM_API}/sendMessage`, {
           method: "POST",
