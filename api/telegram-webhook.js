@@ -8,37 +8,46 @@ export default async function handler(req, res) {
     const TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
     const CHANNEL_ID = "-1003524006612";
 
-    // --- 1. MANEJAR CLICS EN BOTONES (CALLBACK QUERIES) ---
+// --- 1. MANEJAR CLICS EN BOTONES (CALLBACK QUERIES) ---
     if (update.callback_query) {
       const callbackQuery = update.callback_query;
       const chatId = callbackQuery.message.chat.id;
       const telegramId = String(callbackQuery.from.id);
       const data = callbackQuery.data;
 
+      // BLOQUE 1: CUPÓN
       if (data === "enter_coupon") {
-        // Inyectamos el estado en la base de datos
         await db.collection('users').doc(telegramId).update({
           state: "awaiting_coupon"
         });
         
+        await fetch(`${TELEGRAM_API}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: "🎟️ <b>Ingresa tu código de cupón:</b>\n\n(Respeta estrictamente las mayúsculas y minúsculas)",
+            parse_mode: "HTML"
+          }),
+        });
+      } // <-- AQUÍ CIERRA EL BLOQUE DEL CUPÓN
+
+      // BLOQUE 2: RECUPERAR ACCESO (Independiente del anterior)
       if (data === "recover_access") {
-        // 1. VERIFICACIÓN DE SEGURIDAD CRÍTICA (No confíes en el botón)
         const userDoc = await db.collection('users').doc(telegramId).get();
         const userData = userDoc.exists ? userDoc.data() : null;
 
         if (!userData || (userData.status !== "premium" && userData.status !== "premium_coupon")) {
-          // El usuario intentó usar un botón viejo o su suscripción fue revocada
           await fetch(`${TELEGRAM_API}/sendMessage`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               chat_id: chatId,
-              text: "❌ <b>Acceso denegado.</b>\n\nNo tienes una suscripción activa en nuestra base de datos. Si crees que es un error, contacta a soporte o usa el menú principal con /start.",
+              text: "❌ <b>Acceso denegado.</b>\n\nNo tienes una suscripción activa.",
               parse_mode: "HTML"
             }),
           });
         } else {
-          // 2. Generar un NUEVO enlace de UN SOLO USO
           const linkResponse = await fetch(`${TELEGRAM_API}/createChatInviteLink`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -57,37 +66,24 @@ export default async function handler(req, res) {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 chat_id: chatId,
-                text: `🔄 <b>Acceso recuperado</b>\n\nAquí tienes tu nuevo enlace único para unirte al canal privado. Úsalo de inmediato (no lo compartas):\n\n${linkData.result.invite_link}`,
+                text: `🔄 <b>Acceso recuperado</b>\n\nAquí tienes tu nuevo enlace único:\n\n${linkData.result.invite_link}`,
                 parse_mode: "HTML"
               }),
             });
           } else {
-            console.error("Error Telegram API al recuperar:", linkData);
             await fetch(`${TELEGRAM_API}/sendMessage`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 chat_id: chatId,
-                text: "⚠️ <b>Error técnico.</b>\n\nEres usuario Premium, pero hubo un fallo al generar tu invitación. Por favor, inténtalo más tarde."
+                text: "⚠️ <b>Error técnico.</b>\n\nHubo un fallo al generar tu invitación."
               }),
             });
           }
         }
-      }
-        
+      } // <-- AQUÍ CIERRA EL BLOQUE DE RECUPERAR ACCESO
 
-        await fetch(`${TELEGRAM_API}/sendMessage`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text: "🎟️ <b>Ingresa tu código de cupón:</b>\n\n(Respeta estrictamente las mayúsculas y minúsculas)",
-            parse_mode: "HTML"
-          }),
-        });
-      }
-
-      // Cerrar la animación de carga del botón en Telegram
+      // CERRAR ANIMACIÓN DEL BOTÓN
       await fetch(`${TELEGRAM_API}/answerCallbackQuery`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -193,28 +189,31 @@ export default async function handler(req, res) {
 
 // --- 4. MENÚ PRINCIPAL Y FALLBACK ---
     if (isStart) {
-      // Limpiar estado por si se quedó atascado por algún error anterior
       if (userData.state && userData.state !== "normal") {
         await userRef.update({ state: "normal" });
       }
 
-      const keyboard = {
-        inline_keyboard: [
-          // Asegúrate de tener BASE_URL configurado en Vercel
-          [{ text: "💳 Acceso Premium", url: `${process.env.BASE_URL}/api/create-checkout?telegram_id=${telegramId}` }],
-          [{ text: "🎁 Acceso con cupón", callback_data: "enter_coupon" }]
-        ],
-      };
-
-      await sendMessage(`¡Hola <b>${firstName}</b>! 🌿\n\nBienvenido. He registrado tu perfil. Elige cómo deseas acceder:`, keyboard);
+      // LÓGICA DINÁMICA: Diferenciar clientes de usuarios nuevos
+      if (userData.status === "premium" || userData.status === "premium_coupon") {
+        const premiumKeyboard = {
+          inline_keyboard: [
+            [{ text: "🔑 Recuperar acceso al canal", callback_data: "recover_access" }]
+          ]
+        };
+        await sendMessage(`¡Hola de nuevo, <b>${firstName}</b>! 🌿\n\nVeo que ya eres miembro. Si perdiste tu acceso al canal privado, genera una nueva invitación aquí:`, premiumKeyboard);
+      } else {
+        const defaultKeyboard = {
+          inline_keyboard: [
+            [{ text: "💳 Acceso Premium", url: `${process.env.BASE_URL}/api/create-checkout?telegram_id=${telegramId}` }],
+            [{ text: "🎁 Acceso con cupón", callback_data: "enter_coupon" }]
+          ],
+        };
+        await sendMessage(`¡Hola <b>${firstName}</b>! 🌿\n\nBienvenido. He registrado tu perfil. Elige cómo deseas acceder:`, defaultKeyboard);
+      }
     } else {
-      // FALLBACK: Si el usuario escribe texto aleatorio sin estar en un proceso
       await sendMessage("🤔 No entiendo ese comando.\n\nSi intentas usar un cupón, presiona primero el botón de <b>Acceso con cupón</b> en el menú principal.\n\nPresiona /start para volver a ver las opciones.");
     }
 
-    return res.status(200).send("OK");
-  } catch (err) {
-    console.error("Error crítico en Telegram Webhook:", err);
     return res.status(200).send("OK");
   }
 }
