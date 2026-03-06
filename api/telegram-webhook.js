@@ -8,7 +8,7 @@ export default async function handler(req, res) {
     const TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
     const CHANNEL_ID = "-1003524006612";
 
-// --- 1. MANEJAR CLICS EN BOTONES (CALLBACK QUERIES) ---
+    // --- 1. MANEJAR CLICS EN BOTONES (CALLBACK QUERIES) ---
     if (update.callback_query) {
       const callbackQuery = update.callback_query;
       const chatId = callbackQuery.message.chat.id;
@@ -30,7 +30,7 @@ export default async function handler(req, res) {
             parse_mode: "HTML"
           }),
         });
-      } // <-- AQUÍ CIERRA EL BLOQUE DEL CUPÓN
+      }
 
       // BLOQUE 2: RECUPERAR ACCESO (Independiente del anterior)
       if (data === "recover_access") {
@@ -81,7 +81,7 @@ export default async function handler(req, res) {
             });
           }
         }
-      } // <-- AQUÍ CIERRA EL BLOQUE DE RECUPERAR ACCESO
+      }
 
       // CERRAR ANIMACIÓN DEL BOTÓN
       await fetch(`${TELEGRAM_API}/answerCallbackQuery`, {
@@ -187,7 +187,7 @@ export default async function handler(req, res) {
       }
     }
 
-// --- 4. MENÚ PRINCIPAL Y FALLBACK ---
+    // --- 4. MENÚ PRINCIPAL Y FALLBACK ---
     if (isStart) {
       if (userData.state && userData.state !== "normal") {
         await userRef.update({ state: "normal" });
@@ -214,6 +214,11 @@ export default async function handler(req, res) {
       await sendMessage("🤔 No entiendo ese comando.\n\nSi intentas usar un cupón, presiona primero el botón de <b>Acceso con cupón</b> en el menú principal.\n\nPresiona /start para volver a ver las opciones.");
     }
 
+    return res.status(200).send("OK");
+
+  } catch (err) {
+    // ESTE ES EL BLOQUE QUE BORRASTE. ES VITAL PARA QUE LA APLICACIÓN NO EXPLOTE.
+    console.error("Error crítico en Telegram Webhook:", err);
     return res.status(200).send("OK");
   }
 }
