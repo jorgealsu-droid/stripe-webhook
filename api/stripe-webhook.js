@@ -1,93 +1,95 @@
-import Stripe from "stripe";
+import Stripe from 'stripe';
 import db from './firebase.js';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-
-export const config = { api: { bodyParser: false } };
-
-async function buffer(readable) {
-  const chunks = [];
-  for await (const chunk of readable) {
-    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-  }
-  return Buffer.concat(chunks);
-}
+const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
 export default async function handler(req, res) {
-  const buf = await buffer(req);
-  const sig = req.headers["stripe-signature"];
+  if (req.method !== 'POST') return res.status(405).send('Solo POST');
+
+  const sig = req.headers['stripe-signature'];
   let event;
 
   try {
-    event = stripe.webhooks.constructEvent(buf, sig, process.env.STRIPE_WEBHOOK_SECRET);
+    // 1. VERIFICACIÓN DE SEGURIDAD (Criptográfica)
+    const rawBody = await req.text(); // Vercel necesita el body crudo para validar la firma
+    event = stripe.webhooks.constructEvent(rawBody, sig, endpointSecret);
   } catch (err) {
-    return res.status(400).send("Webhook Error");
+    console.error(`❌ Error de firma: ${err.message}`);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-if (event.type === "checkout.session.completed") {
-    const session = event.data.object;
-    const telegramId = session.client_reference_id;
-    const CHANNEL_ID = "-1003524006612";
-    const TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
+  const TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
+  const CHANNEL_ID = "-1003524006612";
 
-    try {
-      // 1. Actualizar usuario en Firestore a estado PREMIUM
-      await db.collection('users').doc(String(telegramId)).update({
-        status: "premium",
-        paidAt: new Date().toISOString(),
-        stripeSessionId: session.id
-      });
+  // 2. PROCESAR EVENTOS
+  switch (event.type) {
+    
+    // CASO A: PAGO EXITOSO (Checkout Único o Primera Suscripción)
+    case 'checkout.session.completed':
+      const session = event.data.object;
+      const telegramId = session.client_reference_id; // Recuperamos el ID que guardamos
 
-      // 2. Generar enlace de invitación de UN SOLO USO
-      const linkResponse = await fetch(`${TELEGRAM_API}/createChatInviteLink`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: CHANNEL_ID,
-          member_limit: 1, // CRÍTICO: Evita que el usuario lo comparta con amigos
-          name: `Premium: ${telegramId}` // Para que lo identifiques en los ajustes de Telegram
-        }),
-      });
+      if (telegramId) {
+        // Actualizar Firestore
+        await db.collection('users').doc(telegramId).update({
+          status: "premium",
+          stripeCustomerId: session.customer,
+          updatedAt: new Date().toISOString()
+        });
 
-      const linkData = await linkResponse.json();
+        // Generar Link de Invitación (Un solo uso)
+        const linkRes = await fetch(`${TELEGRAM_API}/createChatInviteLink`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chat_id: CHANNEL_ID, member_limit: 1, name: `Pago: ${telegramId}` }),
+        });
+        const linkData = await linkRes.json();
 
-      if (!linkData.ok) {
-        throw new Error(`Telegram rechazó crear el enlace: ${linkData.description}`);
+        // Enviar mensaje de bienvenida con el Link
+        if (linkData.ok) {
+          await fetch(`${TELEGRAM_API}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: telegramId,
+              text: `✅ <b>¡Pago exitoso!</b>\n\nBienvenido a la comunidad Premium. Únete al canal usando el siguiente enlace (solo funcionará una vez):\n\n${linkData.result.invite_link}`,
+              parse_mode: "HTML"
+            }),
+          });
+        }
       }
+      break;
 
-      const inviteLink = linkData.result.invite_link;
+    // CASO B: SUSCRIPCIÓN CANCELADA O REEMBOLSO
+    case 'customer.subscription.deleted':
+    case 'charge.refunded':
+      const obj = event.data.object;
+      // Buscamos al usuario por su Customer ID de Stripe
+      const userSnapshot = await db.collection('users').where('stripeCustomerId', '==', obj.customer).get();
+      
+      if (!userSnapshot.empty) {
+        const userDoc = userSnapshot.docs[0];
+        const tId = userDoc.id;
 
-      // 3. Entregar el producto al usuario
-      await fetch(`${TELEGRAM_API}/sendMessage`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: telegramId,
-          text: `✅ <b>¡Pago recibido con éxito!</b>\n\nTu cuenta ahora es Premium. Únete al canal privado usando este enlace único (solo funcionará una vez, no lo compartas):\n\n${inviteLink}`,
-          parse_mode: "HTML"
-        }),
-      });
+        await userDoc.ref.update({ status: "revoked" });
 
-    } catch (err) {
-      console.error("Fallo crítico en la entrega del producto:", err);
-      // Falla de negocio: Si esto ocurre, el usuario pagó pero no recibió el enlace.
-      // Lo ideal aquí sería enviar una alerta a tu propio ID de Telegram para que lo resuelvas manualmente.
-    }
+        // Notificar al usuario (Ley de Protección al Consumidor)
+        await fetch(`${TELEGRAM_API}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: tId,
+            text: "⚠️ <b>Tu acceso ha sido revocado.</b>\n\nHemos detectado una cancelación o reembolso. Si deseas volver a entrar, inicia el proceso de pago nuevamente con /start.",
+            parse_mode: "HTML"
+          }),
+        });
+        
+        // NOTA: Aquí deberías usar la API de Telegram para banear al usuario del canal 
+        // para que sea expulsado físicamente en este momento.
+      }
+      break;
   }
 
-  res.status(200).json({ received: true });
-
-    // Avisar al usuario
-    await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: telegramId,
-        text: "✅ <b>¡Acceso Premium activado!</b>\n\nGracias por tu compra. Ya puedes acceder a todo el contenido.",
-        parse_mode: "HTML"
-      }),
-    });
-  }
-
-  res.status(200).json({ received: true });
+  res.json({ received: true });
 }
