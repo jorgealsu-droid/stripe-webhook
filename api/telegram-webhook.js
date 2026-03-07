@@ -202,12 +202,35 @@ export default async function handler(req, res) {
         };
         await sendMessage(`¡Hola de nuevo, <b>${firstName}</b>! 🌿\n\nVeo que ya eres miembro. Si perdiste tu acceso al canal privado, genera una nueva invitación aquí:`, premiumKeyboard);
       } else {
-        const defaultKeyboard = {
-          inline_keyboard: [
-            [{ text: "💳 Acceso Premium", url: `${process.env.BASE_URL}/api/create-checkout?telegram_id=${telegramId}` }],
-            [{ text: "🎁 Acceso con cupón", callback_data: "enter_coupon" }]
-          ],
-        };
+// --- 4. MENÚ PRINCIPAL Y FALLBACK ---
+if (isStart) {
+  if (userData.state && userData.state !== "normal") {
+    await userRef.update({ state: "normal" });
+  }
+
+  if (userData.status === "premium" || userData.status === "premium_coupon") {
+    const premiumKeyboard = {
+      inline_keyboard: [
+        [{ text: "🔑 Recuperar acceso al canal", callback_data: "recover_access" }]
+      ]
+    };
+    await sendMessage(`¡Hola de nuevo, <b>${firstName}</b>! 🌿\n\nVeo que ya eres miembro. Si perdiste tu acceso al canal privado, genera una nueva invitación aquí:`, premiumKeyboard);
+  } else {
+    // ESTA ES LA LÍNEA CRÍTICA QUE TE FALTA:
+    const defaultKeyboard = {
+      inline_keyboard: [
+        [
+          { 
+            text: "💳 Acceso Premium", 
+            url: `${process.env.BASE_URL}/api/create-checkout?telegram_id=${telegramId}` 
+          }
+        ],
+        [{ text: "🎁 Acceso con cupón", callback_data: "enter_coupon" }]
+      ],
+    };
+    await sendMessage(`¡Hola <b>${firstName}</b>! 🌿\n\nBienvenido. Elige cómo deseas acceder:`, defaultKeyboard);
+  }
+}
         await sendMessage(`¡Hola <b>${firstName}</b>! 🌿\n\nBienvenido. He registrado tu perfil. Elige cómo deseas acceder:`, defaultKeyboard);
       }
     } else {
