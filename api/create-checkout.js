@@ -24,7 +24,7 @@ export default async function handler(req, res) {
           quantity: 1,
         },
       ],
-      mode: 'payment', // O 'subscription' si tu price_id es recurrente
+      mode: 'subscription', // O 'subscription' si tu price_id es recurrente
       
       // CRÍTICO: Aquí es donde anclamos el pago al usuario de Telegram
       client_reference_id: telegram_id,
