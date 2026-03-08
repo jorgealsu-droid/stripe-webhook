@@ -31,7 +31,7 @@ try {
           quantity: 1,
         },
       ],
-      mode: 'payment', // IMPORTANTE: Cambia a 'subscription' si tu precio es mensual
+      mode: 'subscription', // IMPORTANTE: Cambia a 'subscription' si tu precio es mensual
       client_reference_id: telegram_id,
       success_url: `https://t.me/${process.env.TELEGRAM_BOT_USERNAME}?start=success`,
       cancel_url: `https://t.me/${process.env.TELEGRAM_BOT_USERNAME}`,
