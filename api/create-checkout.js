@@ -15,8 +15,15 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Falta el telegram_id. No se puede rastrear el pago.' });
   }
 
-  try {
+try {
+    // 1. PASO NUEVO: Crear el cliente en Stripe explícitamente primero
+    const customer = await stripe.customers.create({
+      metadata: { telegram_id: telegram_id } // Anclamos el ID de Telegram al perfil del cliente
+    });
+
+    // 2. Generar la sesión de Checkout vinculada a ese cliente
     const session = await stripe.checkout.sessions.create({
+      customer: customer.id, // <--- ESTA ES LA LLAVE QUE FALTABA
       payment_method_types: ['card'],
       line_items: [
         {
@@ -24,17 +31,12 @@ export default async function handler(req, res) {
           quantity: 1,
         },
       ],
-      mode: 'subscription', // O 'subscription' si tu price_id es recurrente
-      
-      // CRÍTICO: Aquí es donde anclamos el pago al usuario de Telegram
+      mode: 'payment', // IMPORTANTE: Cambia a 'subscription' si tu precio es mensual
       client_reference_id: telegram_id,
-
-      // Redirecciones tras el pago (Cámbialas por el enlace real de tu bot)
       success_url: `https://t.me/${process.env.TELEGRAM_BOT_USERNAME}?start=success`,
       cancel_url: `https://t.me/${process.env.TELEGRAM_BOT_USERNAME}`,
     });
 
-    // Redirigimos al usuario al checkout alojado en Stripe
     res.redirect(303, session.url);
 
   } catch (error) {
