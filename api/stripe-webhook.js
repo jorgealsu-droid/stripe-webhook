@@ -79,7 +79,87 @@ export default async function handler(req, res) {
       }
       break;
       
-    // Aquí irían los casos de cancelación que omitimos temporalmente
+// --- CASO B: EL PAGO REBOTA (Reintentos) ---
+    case 'invoice.payment_failed':
+      const invoice = event.data.object;
+      const failedCustomerId = invoice.customer;
+      
+      // Buscamos al usuario en Firestore por su ID de Stripe
+      const failedUserSnap = await db.collection('users').where('stripeCustomerId', '==', failedCustomerId).get();
+      
+      if (!failedUserSnap.empty) {
+        const tId = failedUserSnap.docs[0].id;
+        
+        try {
+          // Generar una sesión de Customer Portal para que actualicen la tarjeta
+          const portalSession = await stripe.billingPortal.sessions.create({
+            customer: failedCustomerId,
+            return_url: `https://t.me/${process.env.TELEGRAM_BOT_USERNAME}`,
+          });
+
+          // Avisar al usuario
+          await fetch(`${TELEGRAM_API}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: tId,
+              text: `⚠️ <b>Problemas con tu pago.</b>\n\nNo pudimos procesar el cobro de tu suscripción. Para no perder tu acceso al canal, actualiza tu método de pago aquí:\n\n${portalSession.url}`,
+              parse_mode: "HTML"
+            }),
+          });
+        } catch (error) {
+          console.error("Error generando Customer Portal:", error.message);
+        }
+      }
+      break;
+
+    // --- CASO C: LA SUSCRIPCIÓN MUERE (La Guillotina) ---
+    case 'customer.subscription.deleted':
+      const deletedSub = event.data.object;
+      const deletedCustomerId = deletedSub.customer;
+      
+      const deletedUserSnap = await db.collection('users').where('stripeCustomerId', '==', deletedCustomerId).get();
+      
+      if (!deletedUserSnap.empty) {
+        const userDoc = deletedUserSnap.docs[0];
+        const tId = userDoc.id;
+
+        // 1. Revocar en base de datos
+        await userDoc.ref.update({ status: "revoked" });
+
+        // 2. Mensaje de despedida
+        await fetch(`${TELEGRAM_API}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: tId,
+            text: "❌ <b>Suscripción cancelada.</b>\n\nTu periodo de gracia ha terminado y tu acceso al canal privado ha sido revocado. Si deseas volver a unirte, inicia el proceso nuevamente enviando /start.",
+            parse_mode: "HTML"
+          }),
+        });
+        
+        // 3. EXPULSIÓN FÍSICA DEL CANAL
+        await fetch(`${TELEGRAM_API}/banChatMember`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: CHANNEL_ID,
+            user_id: tId
+          }),
+        });
+        
+        // 4. Retirar el "Ban" para que solo quede expulsado (y pueda volver a pagar a futuro)
+        await fetch(`${TELEGRAM_API}/unbanChatMember`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: CHANNEL_ID,
+            user_id: tId,
+            only_if_banned: true
+          }),
+        });
+      }
+      break;
   }
 
   res.json({ received: true });
