@@ -37,7 +37,6 @@ export default async function handler(req, res) {
 
   switch (event.type) {
     case 'checkout.session.completed': {
-      // Al usar { } aislamos el scope de las variables
       const session = event.data.object;
       const telegramId = session.client_reference_id; 
 
@@ -117,7 +116,7 @@ export default async function handler(req, res) {
 
         await userDoc.ref.update({ status: "revoked" });
 
-        await fetch(`${TELEGRAM_API}/sendMessage`, {
+        const msgRes = await fetch(`${TELEGRAM_API}/sendMessage`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -126,8 +125,8 @@ export default async function handler(req, res) {
             parse_mode: "HTML"
           }),
         });
-        
-        await fetch(`${TELEGRAM_API}/banChatMember`, {
+
+        const banRes = await fetch(`${TELEGRAM_API}/banChatMember`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -135,16 +134,21 @@ export default async function handler(req, res) {
             user_id: tId
           }),
         });
+        const banData = await banRes.json();
         
-        await fetch(`${TELEGRAM_API}/unbanChatMember`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: CHANNEL_ID,
-            user_id: tId,
-            only_if_banned: true
-          }),
-        });
+        if (!banData.ok) {
+          console.error(`CRÍTICO: Fallo al expulsar al usuario ${tId} de Telegram. Razón:`, banData.description);
+        } else {
+          await fetch(`${TELEGRAM_API}/unbanChatMember`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: CHANNEL_ID,
+              user_id: tId,
+              only_if_banned: true
+            }),
+          });
+        }
       }
       break;
     }
