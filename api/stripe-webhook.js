@@ -104,7 +104,7 @@ export default async function handler(req, res) {
       break;
     }
 
-    case 'customer.subscription.deleted': {
+case 'customer.subscription.deleted': {
       const deletedSub = event.data.object;
       const deletedCustomerId = deletedSub.customer;
       
@@ -114,8 +114,10 @@ export default async function handler(req, res) {
         const userDoc = deletedUserSnap.docs[0];
         const tId = userDoc.id;
 
+        // 1. Actualizar estado en la base de datos a "revoked"
         await userDoc.ref.update({ status: "revoked" });
 
+        // 2. Intentar enviar mensaje de despedida
         const msgRes = await fetch(`${TELEGRAM_API}/sendMessage`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -125,7 +127,20 @@ export default async function handler(req, res) {
             parse_mode: "HTML"
           }),
         });
+        const msgData = await msgRes.json();
 
+        if (!msgData.ok) {
+          await db.collection('system_logs').add({
+            level: 'ERROR',
+            process: 'webhook_telegram_sendMessage',
+            telegramId: tId,
+            stripeCustomerId: deletedCustomerId,
+            errorDescription: msgData.description,
+            timestamp: new Date().toISOString()
+          });
+        }
+
+        // 3. Intentar expulsar físicamente del canal
         const banRes = await fetch(`${TELEGRAM_API}/banChatMember`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -137,8 +152,17 @@ export default async function handler(req, res) {
         const banData = await banRes.json();
         
         if (!banData.ok) {
-          console.error(`CRÍTICO: Fallo al expulsar al usuario ${tId} de Telegram. Razón:`, banData.description);
+          // Si Telegram rechaza la expulsión, guardamos el log en Firebase
+          await db.collection('system_logs').add({
+            level: 'CRITICAL',
+            process: 'webhook_telegram_banChatMember',
+            telegramId: tId,
+            channelId: CHANNEL_ID,
+            errorDescription: banData.description,
+            timestamp: new Date().toISOString()
+          });
         } else {
+          // 4. Retirar el Ban solo si la expulsión fue exitosa (para permitir su regreso futuro)
           await fetch(`${TELEGRAM_API}/unbanChatMember`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -149,6 +173,15 @@ export default async function handler(req, res) {
             }),
           });
         }
+      } else {
+        // Log si Stripe envía una cancelación de un cliente que no existe en Firebase
+        await db.collection('system_logs').add({
+            level: 'WARNING',
+            process: 'webhook_stripe_userNotFound',
+            stripeCustomerId: deletedCustomerId,
+            errorDescription: 'Se recibió cancelación pero el cliente no existe en la BD',
+            timestamp: new Date().toISOString()
+        });
       }
       break;
     }
