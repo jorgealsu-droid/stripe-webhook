@@ -32,7 +32,7 @@ export default async function handler(req, res) {
         });
       }
 
-      // BLOQUE 2: RECUPERAR ACCESO (Independiente del anterior)
+      // BLOQUE 2: RECUPERAR ACCESO
       if (data === "recover_access") {
         const userDoc = await db.collection('users').doc(telegramId).get();
         const userData = userDoc.exists ? userDoc.data() : null;
@@ -83,7 +83,6 @@ export default async function handler(req, res) {
         }
       }
 
-      // CERRAR ANIMACIÓN DEL BOTÓN
       await fetch(`${TELEGRAM_API}/answerCallbackQuery`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -100,20 +99,15 @@ export default async function handler(req, res) {
     const telegramId = String(update.message.from.id);
     const firstName = update.message.from.first_name || "Amigo";
     
-    // Extraemos el texto crudo para el cupón (case sensitive) y la versión en minúsculas para comandos
     const rawText = update.message.text.trim();
     const textLower = rawText.toLowerCase();
 
     // --- INTERCEPTOR DE REDIRECCIÓN SILENCIOSA ---
-    // Si el usuario viene directamente de pagar en Stripe, el webhook de Stripe
-    // ya le envió el mensaje de éxito. Abortamos aquí para no duplicar menús.
     if (textLower === "/start success_stripe") {
       return res.status(200).send("OK");
     }
 
-    // EL PUNTO CIEGO CORREGIDO...
-    const isStart = textLower.startsWith("/start") || textLower === "hola" || textLower === "start";
-// EL PUNTO CIEGO CORREGIDO: Usar startsWith para absorber parámetros de redirección de Stripe
+    // EL PUNTO CIEGO CORREGIDO Y SIN DUPLICAR
     const isStart = textLower.startsWith("/start") || textLower === "hola" || textLower === "start";
 
     async function sendMessage(msgText, replyMarkup = null) {
@@ -126,7 +120,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // Leer al usuario
     const userRef = db.collection('users').doc(telegramId);
     const userDoc = await userRef.get();
 
@@ -136,7 +129,7 @@ export default async function handler(req, res) {
         firstName,
         username: update.message.from.username || "",
         status: "new",
-        state: "normal", // Estado por defecto
+        state: "normal",
         lastInteraction: new Date().toISOString(),
       });
     }
@@ -146,12 +139,9 @@ export default async function handler(req, res) {
     // --- 3. MÁQUINA DE ESTADOS: ¿Está esperando un cupón? ---
     if (userData.state === "awaiting_coupon") {
       
-      // ESCOTILLA DE ESCAPE: Si el usuario pone /start, abortamos el cupón
       if (isStart) {
         await userRef.update({ state: "normal" });
-        // No hacemos return para que fluya hacia el menú principal de abajo
       } else {
-        // PROCESAR EL CUPÓN
         const couponRef = db.collection('coupons').doc(rawText);
         const couponDoc = await couponRef.get();
 
@@ -161,7 +151,6 @@ export default async function handler(req, res) {
           return res.status(200).send("OK");
         }
 
-        // Cupón válido: QUEMARLO
         await couponRef.update({
           isActive: false,
           usedBy: telegramId,
@@ -173,7 +162,6 @@ export default async function handler(req, res) {
           state: "normal" 
         });
 
-        // Entregar el producto (Generar Link)
         const linkResponse = await fetch(`${TELEGRAM_API}/createChatInviteLink`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -203,7 +191,6 @@ export default async function handler(req, res) {
         await userRef.update({ state: "normal" });
       }
 
-      // LÓGICA DINÁMICA: Diferenciar clientes de usuarios nuevos
       if (userData.status === "premium" || userData.status === "premium_coupon") {
         const premiumKeyboard = {
           inline_keyboard: [
@@ -226,7 +213,6 @@ export default async function handler(req, res) {
         await sendMessage(`¡Hola <b>${firstName}</b>! 🌿\n\nBienvenido. Elige cómo deseas acceder:`, defaultKeyboard);
       }
     } else {
-      // SOLO cae aquí si escribe texto random que no es un comando ni un cupón
       await sendMessage("🤔 No entiendo ese comando.\n\nSi intentas usar un cupón, presiona primero el botón de <b>Acceso con cupón</b> en el menú principal.\n\nPresiona /start para volver a ver las opciones.");
     }
 
