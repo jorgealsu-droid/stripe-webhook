@@ -1,6 +1,5 @@
 import Stripe from 'stripe';
 
-// Inicializamos Stripe con la variable de entorno (Nunca hardcodeado)
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 export default async function handler(req, res) {
@@ -8,22 +7,19 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Método no permitido. Usa GET.' });
   }
 
-  // Extraemos el telegram_id que inyectamos en la URL desde el webhook
   const { telegram_id } = req.query;
 
   if (!telegram_id) {
     return res.status(400).json({ error: 'Falta el telegram_id. No se puede rastrear el pago.' });
   }
 
-try {
-    // 1. PASO NUEVO: Crear el cliente en Stripe explícitamente primero
+  try {
     const customer = await stripe.customers.create({
-      metadata: { telegram_id: telegram_id } // Anclamos el ID de Telegram al perfil del cliente
+      metadata: { telegram_id: telegram_id } 
     });
 
-    // 2. Generar la sesión de Checkout vinculada a ese cliente
     const session = await stripe.checkout.sessions.create({
-      customer: customer.id, // <--- ESTA ES LA LLAVE QUE FALTABA
+      customer: customer.id, 
       payment_method_types: ['card'],
       line_items: [
         {
@@ -31,9 +27,10 @@ try {
           quantity: 1,
         },
       ],
-      mode: 'subscription', // IMPORTANTE: Cambia a 'subscription' si tu precio es mensual
+      mode: 'subscription', 
       client_reference_id: telegram_id,
-      success_url: `https://t.me/${process.env.TELEGRAM_BOT_USERNAME}?start=success`,
+      // AQUÍ ESTÁ EL CAMBIO CRÍTICO:
+      success_url: `https://t.me/${process.env.TELEGRAM_BOT_USERNAME}?start=success_stripe`,
       cancel_url: `https://t.me/${process.env.TELEGRAM_BOT_USERNAME}`,
     });
 
