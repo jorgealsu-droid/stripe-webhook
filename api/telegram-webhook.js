@@ -103,7 +103,8 @@ export default async function handler(req, res) {
     // Extraemos el texto crudo para el cupón (case sensitive) y la versión en minúsculas para comandos
     const rawText = update.message.text.trim();
     const textLower = rawText.toLowerCase();
-    const isStart = ["/start", "hola", "start"].includes(textLower);
+// EL PUNTO CIEGO CORREGIDO: Usar startsWith para absorber parámetros de redirección de Stripe
+    const isStart = textLower.startsWith("/start") || textLower === "hola" || textLower === "start";
 
     async function sendMessage(msgText, replyMarkup = null) {
       const body = { chat_id: chatId, text: msgText, parse_mode: "HTML" };
@@ -146,7 +147,7 @@ export default async function handler(req, res) {
 
         if (!couponDoc.exists || couponDoc.data().isActive !== true) {
           await sendMessage("❌ <b>Cupón inválido o ya utilizado.</b>\n\nVerifica que esté bien escrito o presiona /start para ver otras opciones.");
-          await userRef.update({ state: "normal" }); // Lo sacamos del bucle
+          await userRef.update({ state: "normal" }); 
           return res.status(200).send("OK");
         }
 
@@ -159,7 +160,7 @@ export default async function handler(req, res) {
 
         await userRef.update({
           status: "premium_coupon",
-          state: "normal" // Limpiar estado
+          state: "normal" 
         });
 
         // Entregar el producto (Generar Link)
@@ -178,7 +179,6 @@ export default async function handler(req, res) {
         if (linkData.ok) {
           await sendMessage(`✅ <b>¡Cupón canjeado con éxito!</b>\n\nÚnete al canal privado usando este enlace único (solo funcionará una vez):\n\n${linkData.result.invite_link}`);
         } else {
-          // Falla de la API de Telegram
           await sendMessage("⚠️ Tu cupón es válido, pero hubo un error al generar la invitación. Contacta a soporte.");
           console.error("Error Telegram API:", linkData);
         }
@@ -200,47 +200,29 @@ export default async function handler(req, res) {
             [{ text: "🔑 Recuperar acceso al canal", callback_data: "recover_access" }]
           ]
         };
-        await sendMessage(`¡Hola de nuevo, <b>${firstName}</b>! 🌿\n\nVeo que ya eres miembro. Si perdiste tu acceso al canal privado, genera una nueva invitación aquí:`, premiumKeyboard);
+        await sendMessage(`¡Hola de nuevo, <b>${firstName}</b>! 🌿\n\nTu suscripción está activa. Si necesitas entrar al canal privado de nuevo, genera una invitación aquí:`, premiumKeyboard);
       } else {
-// --- 4. MENÚ PRINCIPAL Y FALLBACK ---
-if (isStart) {
-  if (userData.state && userData.state !== "normal") {
-    await userRef.update({ state: "normal" });
-  }
-
-  if (userData.status === "premium" || userData.status === "premium_coupon") {
-    const premiumKeyboard = {
-      inline_keyboard: [
-        [{ text: "🔑 Recuperar acceso al canal", callback_data: "recover_access" }]
-      ]
-    };
-    await sendMessage(`¡Hola de nuevo, <b>${firstName}</b>! 🌿\n\nVeo que ya eres miembro. Si perdiste tu acceso al canal privado, genera una nueva invitación aquí:`, premiumKeyboard);
-  } else {
-    // ESTA ES LA LÍNEA CRÍTICA QUE TE FALTA:
-    const defaultKeyboard = {
-      inline_keyboard: [
-        [
-          { 
-            text: "💳 Acceso Premium", 
-            url: `${process.env.BASE_URL}/api/create-checkout?telegram_id=${telegramId}` 
-          }
-        ],
-        [{ text: "🎁 Acceso con cupón", callback_data: "enter_coupon" }]
-      ],
-    };
-    await sendMessage(`¡Hola <b>${firstName}</b>! 🌿\n\nBienvenido. Elige cómo deseas acceder:`, defaultKeyboard);
-  }
-}
-        await sendMessage(`¡Hola <b>${firstName}</b>! 🌿\n\nBienvenido. He registrado tu perfil. Elige cómo deseas acceder:`, defaultKeyboard);
+        const defaultKeyboard = {
+          inline_keyboard: [
+            [
+              { 
+                text: "💳 Acceso Premium", 
+                url: `${process.env.BASE_URL}/api/create-checkout?telegram_id=${telegramId}` 
+              }
+            ],
+            [{ text: "🎁 Acceso con cupón", callback_data: "enter_coupon" }]
+          ],
+        };
+        await sendMessage(`¡Hola <b>${firstName}</b>! 🌿\n\nBienvenido. Elige cómo deseas acceder:`, defaultKeyboard);
       }
     } else {
+      // SOLO cae aquí si escribe texto random que no es un comando ni un cupón
       await sendMessage("🤔 No entiendo ese comando.\n\nSi intentas usar un cupón, presiona primero el botón de <b>Acceso con cupón</b> en el menú principal.\n\nPresiona /start para volver a ver las opciones.");
     }
 
     return res.status(200).send("OK");
 
   } catch (err) {
-    // ESTE ES EL BLOQUE QUE BORRASTE. ES VITAL PARA QUE LA APLICACIÓN NO EXPLOTE.
     console.error("Error crítico en Telegram Webhook:", err);
     return res.status(200).send("OK");
   }
