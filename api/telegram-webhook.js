@@ -103,6 +103,16 @@ export default async function handler(req, res) {
     // Extraemos el texto crudo para el cupón (case sensitive) y la versión en minúsculas para comandos
     const rawText = update.message.text.trim();
     const textLower = rawText.toLowerCase();
+
+    // --- INTERCEPTOR DE REDIRECCIÓN SILENCIOSA ---
+    // Si el usuario viene directamente de pagar en Stripe, el webhook de Stripe
+    // ya le envió el mensaje de éxito. Abortamos aquí para no duplicar menús.
+    if (textLower === "/start success_stripe") {
+      return res.status(200).send("OK");
+    }
+
+    // EL PUNTO CIEGO CORREGIDO...
+    const isStart = textLower.startsWith("/start") || textLower === "hola" || textLower === "start";
 // EL PUNTO CIEGO CORREGIDO: Usar startsWith para absorber parámetros de redirección de Stripe
     const isStart = textLower.startsWith("/start") || textLower === "hola" || textLower === "start";
 
