@@ -15,12 +15,8 @@ export default async function handler(req, res) {
       const telegramId = String(callbackQuery.from.id);
       const data = callbackQuery.data;
 
-      // BLOQUE 1: CUPÓN
       if (data === "enter_coupon") {
-        await db.collection('users').doc(telegramId).update({
-          state: "awaiting_coupon"
-        });
-        
+        await db.collection('users').doc(telegramId).update({ state: "awaiting_coupon" });
         await fetch(`${TELEGRAM_API}/sendMessage`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -32,7 +28,6 @@ export default async function handler(req, res) {
         });
       }
 
-      // BLOQUE 2: RECUPERAR ACCESO
       if (data === "recover_access") {
         const userDoc = await db.collection('users').doc(telegramId).get();
         const userData = userDoc.exists ? userDoc.data() : null;
@@ -102,12 +97,6 @@ export default async function handler(req, res) {
     const rawText = update.message.text.trim();
     const textLower = rawText.toLowerCase();
 
-    // --- INTERCEPTOR DE REDIRECCIÓN SILENCIOSA ---
-    if (textLower === "/start success_stripe") {
-      return res.status(200).send("OK");
-    }
-
-    // EL PUNTO CIEGO CORREGIDO Y SIN DUPLICAR
     const isStart = textLower.startsWith("/start") || textLower === "hola" || textLower === "start";
 
     async function sendMessage(msgText, replyMarkup = null) {
@@ -120,6 +109,7 @@ export default async function handler(req, res) {
       });
     }
 
+    // --- LECTURA DE BASE DE DATOS (Movida hacia arriba) ---
     const userRef = db.collection('users').doc(telegramId);
     const userDoc = await userRef.get();
 
@@ -134,11 +124,22 @@ export default async function handler(req, res) {
       });
     }
 
-    const userData = userDoc.exists ? userDoc.data() : { state: "normal" };
+    const userData = userDoc.exists ? userDoc.data() : { status: "new", state: "normal" };
+
+    // --- INTERCEPTOR DE REDIRECCIÓN INTELIGENTE ---
+    if (textLower === "/start success_stripe") {
+      if (userData.status === "premium" || userData.status === "premium_coupon") {
+        // El webhook fue más rápido que el cliente. Silenciamos la respuesta.
+        return res.status(200).send("OK");
+      } else {
+        // El cliente fue más rápido. Damos feedback de procesamiento.
+        await sendMessage("⏳ <b>Verificando tu pago...</b>\n\nEstamos confirmando la transacción con el procesador. En unos segundos recibirás tu enlace de acceso aquí mismo.");
+        return res.status(200).send("OK");
+      }
+    }
 
     // --- 3. MÁQUINA DE ESTADOS: ¿Está esperando un cupón? ---
     if (userData.state === "awaiting_coupon") {
-      
       if (isStart) {
         await userRef.update({ state: "normal" });
       } else {
