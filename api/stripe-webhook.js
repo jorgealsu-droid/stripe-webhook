@@ -35,6 +35,15 @@ export default async function handler(req, res) {
   const TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
   const CHANNEL_ID = "-1003524006612"; 
 
+  // Función auxiliar para enviar mensajes a Telegram
+  async function sendTelegramMsg(chatId, text) {
+    await fetch(`${TELEGRAM_API}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML" }),
+    });
+  }
+
   switch (event.type) {
     case 'checkout.session.completed': {
       const session = event.data.object;
@@ -44,6 +53,7 @@ export default async function handler(req, res) {
         await db.collection('users').doc(telegramId).update({
           status: "premium",
           stripeCustomerId: session.customer,
+          state: "normal", // Limpiamos cualquier estado de error previo
           updatedAt: new Date().toISOString()
         });
 
@@ -55,24 +65,41 @@ export default async function handler(req, res) {
         const linkData = await linkRes.json();
 
         if (linkData.ok) {
-          await fetch(`${TELEGRAM_API}/sendMessage`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chat_id: telegramId,
-              text: `✅ <b>¡Pago exitoso!</b>\n\nBienvenido a la comunidad Premium. Únete al canal usando el siguiente enlace (solo funcionará una vez):\n\n${linkData.result.invite_link}`,
-              parse_mode: "HTML"
-            }),
-          });
+          await sendTelegramMsg(telegramId, `✅ <b>¡Pago exitoso!</b>\n\nBienvenido a la comunidad Premium. Únete al canal usando el siguiente enlace (solo funcionará una vez):\n\n${linkData.result.invite_link}`);
         } else {
             console.error("Fallo al generar el link en Telegram", linkData);
         }
-      } else {
-        console.error("Pago completado pero no se encontró client_reference_id (telegramId)");
       }
       break;
     }
 
+    // --- NUEVO BLOQUE: FALLO EN EL PRIMER INTENTO DE PAGO ---
+    case 'payment_intent.payment_failed': {
+      const paymentIntent = event.data.object;
+      
+      // En el primer pago, Firebase no tiene el ID. Consultamos a Stripe por los metadatos.
+      if (paymentIntent.customer) {
+        try {
+          const customer = await stripe.customers.retrieve(paymentIntent.customer);
+          const telegramId = customer.metadata.telegram_id;
+
+          if (telegramId) {
+            // Actualizamos la base de datos para que el bot sepa que intentó pagar pero falló
+            await db.collection('users').doc(telegramId).update({
+              state: "payment_failed" 
+            });
+
+            // Opcional: Notificarle en el momento (puede ser ruidoso si falla 3 veces seguidas)
+            await sendTelegramMsg(telegramId, "⚠️ <b>Tu tarjeta fue rechazada.</b>\n\nNotamos que intentaste realizar el pago pero fue declinado. Si presionas 'Atrás' o '/start', podrás generar un nuevo enlace para intentar con otra tarjeta.");
+          }
+        } catch (err) {
+          console.error("Error recuperando customer en payment_failed:", err.message);
+        }
+      }
+      break;
+    }
+
+    // --- BLOQUE: FALLO EN RENOVACIÓN MENSUAL (Mes 2 en adelante) ---
     case 'invoice.payment_failed': {
       const invoice = event.data.object;
       const failedCustomerId = invoice.customer;
@@ -81,22 +108,13 @@ export default async function handler(req, res) {
       
       if (!failedUserSnap.empty) {
         const tId = failedUserSnap.docs[0].id;
-        
         try {
           const portalSession = await stripe.billingPortal.sessions.create({
             customer: failedCustomerId,
             return_url: `https://t.me/${process.env.TELEGRAM_BOT_USERNAME}`,
           });
 
-          await fetch(`${TELEGRAM_API}/sendMessage`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chat_id: tId,
-              text: `⚠️ <b>Problemas con tu pago.</b>\n\nNo pudimos procesar el cobro de tu suscripción. Para no perder tu acceso al canal, actualiza tu método de pago aquí:\n\n${portalSession.url}`,
-              parse_mode: "HTML"
-            }),
-          });
+          await sendTelegramMsg(tId, `⚠️ <b>Problemas con tu pago recurrente.</b>\n\nNo pudimos procesar el cobro de tu suscripción. Para no perder tu acceso al canal, actualiza tu método de pago aquí:\n\n${portalSession.url}`);
         } catch (error) {
           console.error("Error generando Customer Portal:", error.message);
         }
@@ -104,7 +122,7 @@ export default async function handler(req, res) {
       break;
     }
 
-case 'customer.subscription.deleted': {
+    case 'customer.subscription.deleted': {
       const deletedSub = event.data.object;
       const deletedCustomerId = deletedSub.customer;
       
@@ -114,74 +132,32 @@ case 'customer.subscription.deleted': {
         const userDoc = deletedUserSnap.docs[0];
         const tId = userDoc.id;
 
-        // 1. Actualizar estado en la base de datos a "revoked"
         await userDoc.ref.update({ status: "revoked" });
 
-        // 2. Intentar enviar mensaje de despedida
-        const msgRes = await fetch(`${TELEGRAM_API}/sendMessage`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: tId,
-            text: "❌ <b>Suscripción cancelada.</b>\n\nTu periodo de gracia ha terminado y tu acceso al canal privado ha sido revocado. Si deseas volver a unirte, inicia el proceso nuevamente enviando /start.",
-            parse_mode: "HTML"
-          }),
-        });
-        const msgData = await msgRes.json();
+        await sendTelegramMsg(tId, "❌ <b>Suscripción cancelada.</b>\n\nTu periodo de gracia ha terminado y tu acceso al canal privado ha sido revocado. Si deseas volver a unirte, inicia el proceso nuevamente enviando /start.");
 
-        if (!msgData.ok) {
-          await db.collection('system_logs').add({
-            level: 'ERROR',
-            process: 'webhook_telegram_sendMessage',
-            telegramId: tId,
-            stripeCustomerId: deletedCustomerId,
-            errorDescription: msgData.description,
-            timestamp: new Date().toISOString()
-          });
-        }
-
-        // 3. Intentar expulsar físicamente del canal
         const banRes = await fetch(`${TELEGRAM_API}/banChatMember`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: CHANNEL_ID,
-            user_id: tId
-          }),
+          body: JSON.stringify({ chat_id: CHANNEL_ID, user_id: tId }),
         });
         const banData = await banRes.json();
         
         if (!banData.ok) {
-          // Si Telegram rechaza la expulsión, guardamos el log en Firebase
           await db.collection('system_logs').add({
             level: 'CRITICAL',
             process: 'webhook_telegram_banChatMember',
             telegramId: tId,
-            channelId: CHANNEL_ID,
             errorDescription: banData.description,
             timestamp: new Date().toISOString()
           });
         } else {
-          // 4. Retirar el Ban solo si la expulsión fue exitosa (para permitir su regreso futuro)
           await fetch(`${TELEGRAM_API}/unbanChatMember`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chat_id: CHANNEL_ID,
-              user_id: tId,
-              only_if_banned: true
-            }),
+            body: JSON.stringify({ chat_id: CHANNEL_ID, user_id: tId, only_if_banned: true }),
           });
         }
-      } else {
-        // Log si Stripe envía una cancelación de un cliente que no existe en Firebase
-        await db.collection('system_logs').add({
-            level: 'WARNING',
-            process: 'webhook_stripe_userNotFound',
-            stripeCustomerId: deletedCustomerId,
-            errorDescription: 'Se recibió cancelación pero el cliente no existe en la BD',
-            timestamp: new Date().toISOString()
-        });
       }
       break;
     }
