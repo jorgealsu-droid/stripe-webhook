@@ -186,8 +186,23 @@ export default async function handler(req, res) {
       }
     }
 
-    // --- 4. MENÚ PRINCIPAL Y FALLBACK ---
+// --- 4. MENÚ PRINCIPAL Y FALLBACK ---
     if (isStart) {
+      // Si el usuario viene de un pago fallido, le damos un tratamiento específico de retención
+      if (userData.state === "payment_failed") {
+        await userRef.update({ state: "normal" }); // Limpiamos para no ciclarlo
+        
+        const retryKeyboard = {
+          inline_keyboard: [
+            [{ text: "💳 Reintentar pago con otra tarjeta", url: `${process.env.BASE_URL}/api/create-checkout?telegram_id=${telegramId}` }],
+            [{ text: "Volver al menú principal", callback_data: "main_menu" }] // Necesitarás atrapar este callback
+          ]
+        };
+        await sendMessage(`⚠️ <b>Hubo un problema con tu tarjeta, ${firstName}.</b>\n\nNotamos que tu último intento de pago fue declinado por el banco. ¿Deseas intentar con otro método de pago para asegurar tu acceso?`, retryKeyboard);
+        return res.status(200).send("OK");
+      }
+
+      // Si tenía otro estado (ej. esperando cupón y se arrepintió), lo limpiamos
       if (userData.state && userData.state !== "normal") {
         await userRef.update({ state: "normal" });
       }
@@ -202,17 +217,13 @@ export default async function handler(req, res) {
       } else {
         const defaultKeyboard = {
           inline_keyboard: [
-            [
-              { 
-                text: "💳 Acceso Premium", 
-                url: `${process.env.BASE_URL}/api/create-checkout?telegram_id=${telegramId}` 
-              }
-            ],
+            [{ text: "💳 Acceso Premium", url: `${process.env.BASE_URL}/api/create-checkout?telegram_id=${telegramId}` }],
             [{ text: "🎁 Acceso con cupón", callback_data: "enter_coupon" }]
           ],
         };
         await sendMessage(`¡Hola <b>${firstName}</b>! 🌿\n\nBienvenido. Elige cómo deseas acceder:`, defaultKeyboard);
       }
+    }
     } else {
       await sendMessage("🤔 No entiendo ese comando.\n\nSi intentas usar un cupón, presiona primero el botón de <b>Acceso con cupón</b> en el menú principal.\n\nPresiona /start para volver a ver las opciones.");
     }
