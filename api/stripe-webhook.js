@@ -73,7 +73,7 @@ export default async function handler(req, res) {
       break;
     }
 
-    // --- NUEVO BLOQUE: FALLO EN EL PRIMER INTENTO DE PAGO ---
+    // --- BLOQUE: FALLO EN EL PRIMER INTENTO DE PAGO ---
     case 'payment_intent.payment_failed': {
       const paymentIntent = event.data.object;
       
@@ -117,6 +117,34 @@ export default async function handler(req, res) {
           await sendTelegramMsg(tId, `⚠️ <b>Problemas con tu pago recurrente.</b>\n\nNo pudimos procesar el cobro de tu suscripción. Para no perder tu acceso al canal, actualiza tu método de pago aquí:\n\n${portalSession.url}`);
         } catch (error) {
           console.error("Error generando Customer Portal:", error.message);
+        }
+      }
+      break;
+    }
+
+    // --- NUEVO BLOQUE: RENOVACIÓN EXITOSA (Mes 2 en adelante) ---
+    case 'invoice.payment_succeeded': {
+      const invoice = event.data.object;
+      
+      // Ignoramos el primer pago (billing_reason: subscription_create) 
+      // Solo actuamos en renovaciones (billing_reason: subscription_cycle)
+      if (invoice.billing_reason === 'subscription_cycle') {
+        const customerId = invoice.customer;
+        const userSnap = await db.collection('users').where('stripeCustomerId', '==', customerId).get();
+
+        if (!userSnap.empty) {
+          const tId = userSnap.docs[0].id;
+          
+          try {
+            const portalSession = await stripe.billingPortal.sessions.create({
+              customer: customerId,
+              return_url: `https://t.me/${process.env.TELEGRAM_BOT_USERNAME}`,
+            });
+
+            await sendTelegramMsg(tId, `✅ <b>¡Renovación exitosa!</b>\n\nTu acceso Premium se ha extendido un mes más. Gracias por seguir en la comunidad.\n\n<i>Nota: Puedes gestionar o cancelar tu suscripción en cualquier momento desde tu panel de control:</i>\n\n👉 <a href="${portalSession.url}">Gestionar mi suscripción</a>`);
+          } catch (error) {
+            console.error("Error al crear portal en renovación:", error.message);
+          }
         }
       }
       break;
