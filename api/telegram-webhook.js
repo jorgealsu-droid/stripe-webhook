@@ -14,6 +14,7 @@ export default async function handler(req, res) {
       const chatId = callbackQuery.message.chat.id;
       const telegramId = String(callbackQuery.from.id);
       const data = callbackQuery.data;
+      const firstName = callbackQuery.from.first_name || "Amigo";
 
       if (data === "enter_coupon") {
         await db.collection('users').doc(telegramId).update({ state: "awaiting_coupon" });
@@ -78,6 +79,27 @@ export default async function handler(req, res) {
         }
       }
 
+      // Manejador para cuando el usuario decide cancelar el reintento de pago
+      if (data === "main_menu") {
+        await db.collection('users').doc(telegramId).update({ state: "normal" });
+        const defaultKeyboard = {
+          inline_keyboard: [
+            [{ text: "💳 Acceso Premium", url: `${process.env.BASE_URL}/api/create-checkout?telegram_id=${telegramId}` }],
+            [{ text: "🎁 Acceso con cupón", callback_data: "enter_coupon" }]
+          ],
+        };
+        await fetch(`${TELEGRAM_API}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: `¡Hola <b>${firstName}</b>! 🌿\n\nBienvenido. Elige cómo deseas acceder:`,
+            parse_mode: "HTML",
+            reply_markup: defaultKeyboard
+          }),
+        });
+      }
+
       await fetch(`${TELEGRAM_API}/answerCallbackQuery`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -109,7 +131,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // --- LECTURA DE BASE DE DATOS (Movida hacia arriba) ---
     const userRef = db.collection('users').doc(telegramId);
     const userDoc = await userRef.get();
 
@@ -126,13 +147,10 @@ export default async function handler(req, res) {
 
     const userData = userDoc.exists ? userDoc.data() : { status: "new", state: "normal" };
 
-    // --- INTERCEPTOR DE REDIRECCIÓN INTELIGENTE ---
     if (textLower === "/start success_stripe") {
       if (userData.status === "premium" || userData.status === "premium_coupon") {
-        // El webhook fue más rápido que el cliente. Silenciamos la respuesta.
         return res.status(200).send("OK");
       } else {
-        // El cliente fue más rápido. Damos feedback de procesamiento.
         await sendMessage("⏳ <b>Verificando tu pago...</b>\n\nEstamos confirmando la transacción con el procesador. En unos segundos recibirás tu enlace de acceso aquí mismo.");
         return res.status(200).send("OK");
       }
@@ -186,23 +204,21 @@ export default async function handler(req, res) {
       }
     }
 
-// --- 4. MENÚ PRINCIPAL Y FALLBACK ---
+    // --- 4. MENÚ PRINCIPAL Y FALLBACK ---
     if (isStart) {
-      // Si el usuario viene de un pago fallido, le damos un tratamiento específico de retención
       if (userData.state === "payment_failed") {
-        await userRef.update({ state: "normal" }); // Limpiamos para no ciclarlo
+        await userRef.update({ state: "normal" }); 
         
         const retryKeyboard = {
           inline_keyboard: [
-            [{ text: "💳 Reintentar pago con otra tarjeta", url: `${process.env.BASE_URL}/api/create-checkout?telegram_id=${telegramId}` }],
-            [{ text: "Volver al menú principal", callback_data: "main_menu" }] // Necesitarás atrapar este callback
+            [{ text: "💳 Reintentar pago", url: `${process.env.BASE_URL}/api/create-checkout?telegram_id=${telegramId}` }],
+            [{ text: "Volver al menú principal", callback_data: "main_menu" }] 
           ]
         };
         await sendMessage(`⚠️ <b>Hubo un problema con tu tarjeta, ${firstName}.</b>\n\nNotamos que tu último intento de pago fue declinado por el banco. ¿Deseas intentar con otro método de pago para asegurar tu acceso?`, retryKeyboard);
         return res.status(200).send("OK");
       }
 
-      // Si tenía otro estado (ej. esperando cupón y se arrepintió), lo limpiamos
       if (userData.state && userData.state !== "normal") {
         await userRef.update({ state: "normal" });
       }
@@ -223,7 +239,6 @@ export default async function handler(req, res) {
         };
         await sendMessage(`¡Hola <b>${firstName}</b>! 🌿\n\nBienvenido. Elige cómo deseas acceder:`, defaultKeyboard);
       }
-    }
     } else {
       await sendMessage("🤔 No entiendo ese comando.\n\nSi intentas usar un cupón, presiona primero el botón de <b>Acceso con cupón</b> en el menú principal.\n\nPresiona /start para volver a ver las opciones.");
     }
