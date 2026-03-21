@@ -90,7 +90,7 @@ export default async function handler(req, res) {
             });
 
             // Opcional: Notificarle en el momento (puede ser ruidoso si falla 3 veces seguidas)
-            await sendTelegramMsg(telegramId, "⚠️ <b>Tu tarjeta fue rechazada.</b>\n\nNotamos que intentaste realizar el pago pero fue declinado. Si presionas 'Atrás' o '/start', podrás generar un nuevo enlace para intentar con otra tarjeta.");
+            await sendTelegramMsg(telegramId, "⚠️ <b>Tu tarjeta fue rechazada.</b>\n\nNotamos que intentaste realizar el pago pero fue declinado. Envía /start para generar un nuevo enlace e intentar con otra tarjeta.");
           }
         } catch (err) {
           console.error("Error recuperando customer en payment_failed:", err.message);
