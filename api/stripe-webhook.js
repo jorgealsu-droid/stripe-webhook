@@ -128,7 +128,7 @@ export default async function handler(req, res) {
       
       // Ignoramos el primer pago (billing_reason: subscription_create) 
       // Solo actuamos en renovaciones (billing_reason: subscription_cycle)
-      if (invoice.billing_reason === 'subscription_cycle') {
+      if (invoice.billing_reason === 'subscription_cycle' || invoice.billing_reason === 'manual') {
         const customerId = invoice.customer;
         const userSnap = await db.collection('users').where('stripeCustomerId', '==', customerId).get();
 
