@@ -124,6 +124,7 @@ export default async function handler(req, res) {
 
     // --- NUEVO BLOQUE: RENOVACIÓN EXITOSA (Mes 2 en adelante) ---
     case 'invoice.payment_succeeded': {
+      console.log("DEBUG FATAL: Recibiendo evento. Customer:", event.data.object.customer);
       const invoice = event.data.object;
       
       // Ignoramos el primer pago (billing_reason: subscription_create) 
