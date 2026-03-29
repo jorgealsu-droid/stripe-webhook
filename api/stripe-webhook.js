@@ -1,6 +1,10 @@
 import Stripe from 'stripe';
 import db from './firebase.js';
 
+export default async function handler(req, res) {
+  console.log("!!! WEBHOOK RECIBIDO - INICIO DE PRUEBA !!!");
+  return res.status(500).json({ error: "Forzando error para ver logs" });
+}
 export const config = {
   api: {
     bodyParser: false,
