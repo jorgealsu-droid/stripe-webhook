@@ -157,7 +157,15 @@ export default async function handler(req, res) {
               return_url: `https://t.me/${process.env.TELEGRAM_BOT_USERNAME}`,
             });
 
-            await sendTelegramMsg(tId, `✅ <b>¡Renovación exitosa!</b>\n\nTu acceso Premium se ha extendido un mes más. Gracias por seguir en la comunidad.\n\n👉 <a href="${portalSession.url}">Gestionar mi suscripción</a>`);
+            await sendTelegramMsg(tId, `✅ <b>¡Tu suscripción se ha renovado con éxito!</b>
+
+Gracias por seguir formando parte de nuestra comunidad premium. Tu acceso mensual está garantizado y seguiremos compartiendo contigo las reflexiones y textos diarios diseñados para acompañar tu día.
+
+Vienen semanas con contenido muy valioso, nos alegra que sigas aquí para recibirlo.
+
+⚙️ <i>Administración de tu cuenta:</i>
+Tienes el control total de tu suscripción. Si necesitas actualizar tu método de pago, descargar tus recibos o gestionar tus preferencias de facturación en el futuro, puedes hacerlo desde tu portal seguro:
+👉 <a href="${portalSession.url}">Mi Portal de Suscripción</a>`);
           }
         }
         break;
