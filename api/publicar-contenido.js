@@ -1,34 +1,34 @@
 import db from './firebase.js';
 
 const TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
-const CHANNEL_ID = "-1003524006612"; 
+const CHANNEL_ID = "-1003524006612";
 
 export default async function handler(req, res) {
-  // Validación de seguridad (Misma llave que el cron de cupones)
+  // 1. Barrera de seguridad
   if (req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
     return res.status(401).json({ error: 'No autorizado' });
   }
 
   try {
-    // Obtener fecha actual en formato YYYY-MM-DD
-    const today = new Date().toISOString().split('T')[0]; 
+    // 2. Corrección arquitectónica: Forzamos la zona horaria local de CDMX
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Mexico_City' });
     
-    // Buscar el contenido del día usando la fecha como ID de documento
+    // 3. Consulta a la base de datos
     const contentDoc = await db.collection('content').doc(today).get();
 
     if (!contentDoc.exists) {
-      console.error(`No hay contenido programado para hoy: ${today}`);
-      return res.status(404).json({ message: "Contenido no encontrado" });
+      console.error(`Fallo: No hay contenido programado para la fecha local de hoy: ${today}`);
+      return res.status(404).json({ message: "Contenido no encontrado", fechaBuscada: today });
     }
 
     const content = contentDoc.data();
 
-    // Evitar duplicados (Falla de seguridad lógica)
+    // 4. Prevención de envíos duplicados
     if (content.sent) {
       return res.status(200).json({ message: "El contenido de hoy ya fue enviado previamente." });
     }
 
-    // Enviar a Telegram
+    // 5. Disparo a la API de Telegram
     const response = await fetch(`${TELEGRAM_API}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -40,15 +40,15 @@ export default async function handler(req, res) {
     });
 
     if (response.ok) {
-      // Marcar como enviado en la base de datos
+      // 6. Actualización de estado en Firestore
       await contentDoc.ref.update({ sent: true, sentAt: new Date().toISOString() });
-      return res.status(200).json({ status: "success", message: "Contenido publicado" });
+      return res.status(200).json({ status: "success", message: "Contenido publicado exitosamente", fecha: today });
     } else {
       throw new Error(await response.text());
     }
 
   } catch (error) {
-    console.error("Error publicando contenido:", error);
+    console.error("Falla crítica publicando contenido:", error);
     return res.status(500).json({ error: error.message });
   }
 }
