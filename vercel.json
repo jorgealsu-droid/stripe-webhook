@@ -2,7 +2,11 @@
   "crons": [
     {
       "path": "/api/cron-cupones",
-      "schedule": "0 0 * * *"
+      "schedule": "0 6 * * *" 
+    },
+    {
+      "path": "/api/publicar-contenido",
+      "schedule": "0 14 * * *" 
     }
   ]
 }
