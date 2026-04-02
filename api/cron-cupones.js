@@ -40,8 +40,24 @@ export default async function handler(req, res) {
       message: "Cupones invalidados por vencimiento de vigencia." 
     });
 
-  } catch (error) {
-    console.error("Falla en el motor de auditoría de cupones:", error);
+} catch (error) {
+    console.error("Falla de ejecución:", error);
+    
+    // Disparador de emergencia a Telegram personal
+    const TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
+    const ADMIN_ID = process.env.ADMIN_CHAT_ID;
+    
+    if (ADMIN_ID) {
+      await fetch(`${TELEGRAM_API}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          chat_id: ADMIN_ID, 
+          text: `🚨 ERROR CRÍTICO EN SCRIPT:\n${error.message}` 
+        }),
+      });
+    }
+
     return res.status(500).json({ error: error.message });
   }
 }
