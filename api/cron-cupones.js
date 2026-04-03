@@ -11,7 +11,7 @@ export default async function handler(req, res) {
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Mexico_City' });
     
     // 3. Query: Cupones 'available' cuya fecha 'expiresAt' es menor a hoy
-    const expiredQuery = await db.collection('cupones_rotos_test')
+    const expiredQuery = await db.collection('coupons')
       .where('status', '==', 'available')
       .where('expiresAt', '<', today)
       .get();
