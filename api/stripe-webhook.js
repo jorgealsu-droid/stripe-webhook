@@ -1,36 +1,40 @@
 import Stripe from 'stripe';
-import db from '../api/firebase.js'; // Importación por defecto (alineada con tu firebase.js)
+import db from '../api/firebase.js';
 import { buffer } from 'micro';
-
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 export const config = {
   api: {
-    bodyParser: false,
+    bodyParser: false, 
   },
 };
 
-export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).send('Method Not Allowed');
-  }
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-  const buf = await buffer(req);
-  const sig = req.headers['stripe-signature'];
-  const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
+export default async function handler(req, res) {
+  // 1. Cierre del Punto Ciego: Rechazar inmediatamente lo que no sea POST
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).end('Method Not Allowed');
+  }
 
   let event;
 
+  // 2. Extracción y Validación (Un solo bloque Try/Catch para esto)
   try {
+    const rawBody = await buffer(req);
+    const signature = req.headers['stripe-signature'];
+    const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
     console.log("=== DIAGNÓSTICO DE ENTRADA ===");
-    console.log("Secreto configurado en .env:", endpointSecret);
-    
-    event = stripe.webhooks.constructEvent(buf, sig, endpointSecret);
+    console.log("Secreto configurado en .env:", endpointSecret ? "Cargado" : "NO ENCONTRADO");
+
+    event = stripe.webhooks.constructEvent(rawBody, signature, endpointSecret);
   } catch (err) {
     console.error(`❌ Error de firma: ${err.message}`);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
+  // 3. Lógica de Negocio
   try {
     switch (event.type) {
       case 'customer.subscription.deleted':
@@ -62,12 +66,12 @@ export default async function handler(req, res) {
         break;
 
       default:
-        console.log(`Evento ignorado: ${event.type}`);
+        console.log(`Evento ignorado de forma segura: ${event.type}`);
     }
 
-    res.json({ received: true });
+    return res.json({ received: true });
   } catch (error) {
-    console.error('Error procesando el webhook:', error);
-    res.status(500).send('Internal Server Error');
+    console.error('❌ Error interno procesando el webhook:', error);
+    return res.status(500).send('Internal Server Error');
   }
 }
