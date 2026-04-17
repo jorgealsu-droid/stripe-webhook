@@ -1,7 +1,7 @@
 import Stripe from 'stripe';
 import db from '../api/firebase.js';
-import { buffer } from 'micro';
 
+// Mantenemos la orden de apagar el parser de Vercel
 export const config = {
   api: {
     bodyParser: false, 
@@ -11,31 +11,38 @@ export const config = {
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 export default async function handler(req, res) {
-  // 1. Cierre del Punto Ciego: Rechazar inmediatamente lo que no sea POST
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return res.status(405).end('Method Not Allowed');
   }
 
-  let event;
-
-  // 2. Extracción y Validación (Un solo bloque Try/Catch para esto)
   try {
-    const rawBody = await buffer(req);
+    // 1. LECTURA NATIVA: Adiós 'micro'. Leemos los bytes puros directamente de Node.js
+    const rawBody = await new Promise((resolve, reject) => {
+      let data = '';
+      req.on('data', chunk => { data += chunk; });
+      req.on('end', () => resolve(data));
+      req.on('error', reject);
+    });
+
     const signature = req.headers['stripe-signature'];
     const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
-    console.log("=== DIAGNÓSTICO DE ENTRADA ===");
-    console.log("Secreto configurado en .env:", endpointSecret ? "Cargado" : "NO ENCONTRADO");
+    // 2. EL TRACER BULLET: Forzamos a Vercel a imprimir qué está procesando realmente
+    console.log("=== DIAGNÓSTICO PROFUNDO ===");
+    console.log(`1. Longitud del rawBody: ${rawBody.length} caracteres`);
+    console.log(`2. Primeros 20 caracteres: ${rawBody.substring(0, 20)}...`);
+    console.log(`3. Inicio de Firma: ${signature ? signature.substring(0, 15) : 'NULA'}`);
+    console.log(`4. Últimos 4 del Secreto Vercel: ${endpointSecret ? endpointSecret.slice(-4) : 'NULO'}`);
 
-    event = stripe.webhooks.constructEvent(rawBody, signature, endpointSecret);
-  } catch (err) {
-    console.error(`❌ Error de firma: ${err.message}`);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
+    if (rawBody.length === 0) {
+      throw new Error("El body crudo está vacío. El parser de Vercel lo mutiló antes de que pudiéramos leerlo.");
+    }
 
-  // 3. Lógica de Negocio
-  try {
+    // 3. Validación
+    const event = stripe.webhooks.constructEvent(rawBody, signature, endpointSecret);
+
+    // 4. Lógica de Negocio
     switch (event.type) {
       case 'customer.subscription.deleted':
       case 'invoice.payment_failed':
@@ -70,8 +77,9 @@ export default async function handler(req, res) {
     }
 
     return res.json({ received: true });
-  } catch (error) {
-    console.error('❌ Error interno procesando el webhook:', error);
-    return res.status(500).send('Internal Server Error');
+
+  } catch (err) {
+    console.error(`❌ Falla crítica: ${err.message}`);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 }
