@@ -23,13 +23,14 @@ export default async function handler(req, res) {
       payment_method_types: ['card'],
       line_items: [
         {
+          // Aquí quitamos cualquier ID fijo y usamos la variable de entorno
           price: process.env.STRIPE_PRICE_ID, 
           quantity: 1,
         },
       ],
       mode: 'subscription', 
       client_reference_id: telegram_id,
-      // AQUÍ ESTÁ EL CAMBIO CRÍTICO:
+      // Usamos el nombre del bot que configuraste en Vercel para redirigir al usuario
       success_url: `https://t.me/${process.env.TELEGRAM_BOT_USERNAME}?start=success_stripe`,
       cancel_url: `https://t.me/${process.env.TELEGRAM_BOT_USERNAME}`,
     });
