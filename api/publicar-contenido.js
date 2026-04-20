@@ -1,4 +1,17 @@
-import db from './firebase.js';
+import admin from 'firebase-admin';
+
+// Aseguramos la conexión usando las variables de entorno, como en el webhook
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert({
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+    }),
+  });
+}
+
+const db = admin.firestore();
 
 export default async function handler(req, res) {
   // 1. Barrera de seguridad
@@ -6,28 +19,24 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'No autorizado' });
   }
 
-  // Configuración Maestra de Canales (Aquí escalarás a futuro)
+  // 2. Configuración Maestra apuntando a la nueva colección
   const channelsConfig = [
-    { name: "Liturgia", dbCollection: "content", telegramId: "-1003524006612" },
-    // Para agregar tu segundo canal, solo descomenta y llena esta línea:
-    // { name: "Estoicismo", dbCollection: "content_estoicismo", telegramId: "-100XXXXXXX" },
-    // { name: "Finanzas", dbCollection: "content_finanzas", telegramId: "-100YYYYYYY" }
+    { name: "Liturgia", dbCollection: "liturgical_content", telegramId: process.env.TELEGRAM_CHANNEL_ID },
   ];
 
   const TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
   const ADMIN_ID = process.env.ADMIN_CHAT_ID;
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Mexico_City' });
-  let report = []; // Para llevar registro de lo que pasó en cada canal
+  let report = []; 
 
   try {
-    // 2. Iteramos sobre cada canal de forma secuencial
     for (const config of channelsConfig) {
-      console.log(`Procesando canal: ${config.name}...`);
+      console.log(`Procesando canal: ${config.name} para la fecha: ${today}...`);
       const contentDoc = await db.collection(config.dbCollection).doc(today).get();
 
       if (!contentDoc.exists) {
          report.push({ canal: config.name, status: "ignorado", razon: "Sin contenido para hoy" });
-         continue; // Saltamos al siguiente canal en lugar de detener todo el script
+         continue; 
       }
 
       const content = contentDoc.data();
@@ -37,13 +46,13 @@ export default async function handler(req, res) {
         continue;
       }
 
-      // 3. Disparo a Telegram (Canal Público)
+      // 3. Disparo a Telegram usando la variable correcta: mensaje_formateado
       const response = await fetch(`${TELEGRAM_API}/sendMessage`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
           chat_id: config.telegramId, 
-          text: content.text, 
+          text: content.mensaje_formateado, 
           parse_mode: "HTML" 
         }),
       });
@@ -52,11 +61,11 @@ export default async function handler(req, res) {
         throw new Error(`Falla en Telegram para ${config.name}: ${await response.text()}`);
       }
 
-      // 4. Actualizar Firestore
+      // 4. Actualizar estado a enviado
       await contentDoc.ref.update({ sent: true, sentAt: new Date().toISOString() });
       report.push({ canal: config.name, status: "exito", fecha: today });
 
-      // 5. Auditoría de Inventario (Alerta Temprana)
+      // 5. Auditoría de Inventario 
       const unsentQuery = await db.collection(config.dbCollection).where('sent', '==', false).count().get();
       const remainingDays = unsentQuery.data().count;
 
@@ -66,19 +75,18 @@ export default async function handler(req, res) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ 
             chat_id: ADMIN_ID, 
-            text: `⚠️ <b>ALERTA DE INVENTARIO: ${config.name}</b>\nSolo quedan ${remainingDays} días de contenido programado. Es necesario cargar más a Firestore pronto.`,
+            text: `⚠️ <b>ALERTA DE INVENTARIO: ${config.name}</b>\nSolo quedan ${remainingDays} días de contenido.`,
             parse_mode: "HTML"
           }),
         });
       }
-    } // Fin del loop
+    } 
 
-    return res.status(200).json({ status: "Proceso por lotes finalizado", resultados: report });
+    return res.status(200).json({ status: "Proceso finalizado", resultados: report });
 
   } catch (error) {
     console.error("Falla crítica en Orquestador:", error);
     
-    // Alerta de Telemetría a Telegram Personal (Ya comprobada)
     if (ADMIN_ID) {
       await fetch(`${TELEGRAM_API}/sendMessage`, {
         method: "POST",
