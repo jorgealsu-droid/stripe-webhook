@@ -5,10 +5,9 @@ if (!admin.apps.length) {
     credential: admin.credential.cert({
       projectId: process.env.FIREBASE_PROJECT_ID,
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      // Esta versión limpia comillas y arregla saltos de línea reales o escritos
-      privateKey: process.env.FIREBASE_PRIVATE_KEY
-        .replace(/\\n/g, '\n')
-        .replace(/"/g, '') 
+      // Usamos .trim() para eliminar cualquier espacio accidental al inicio o final
+      // y mantenemos el reemplazo estándar de saltos de línea.
+      privateKey: process.env.FIREBASE_PRIVATE_KEY.trim().replace(/\\n/g, '\n'),
     }),
   });
 }
