@@ -13,7 +13,6 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 export default async function handler(req, res) {
-  // Validación de seguridad para el Cron de Vercel
   if (req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
     return res.status(401).json({ error: 'No autorizado' });
   }
@@ -37,32 +36,35 @@ export default async function handler(req, res) {
 
     const data = contentDoc.data();
 
+    // Mapeo flexible para evitar el "undefined" si hay acentos en Firestore
+    const tiempo = data.tiempo_liturgico || data.tiempo_litúrgico || "Sin tiempo";
+    const evangelio = data.evangelio || "Evangelio no disponible";
+    const reflexion = data.reflexion || data.reflexión || "Reflexión no disponible";
+    const audio = data.audioUrl || data.audio_url;
+
     for (const config of channelsConfig) {
       if (!config.telegramId) continue;
 
       let response;
 
-      if (config.type === "audio") {
-        // --- LÓGICA PREMIUM: AUDIO + TEXTO (Limitado a 1024 chars) ---
-        let caption = `<b>${data.tiempo_liturgico}</b>\n\n📖 <b>Evangelio:</b>\n${data.evangelio}`;
-        
-        if (caption.length > 1024) {
-          caption = caption.substring(0, 1020) + "...";
-        }
+      if (config.type === "audio" && audio) {
+        // --- ENVÍO AUDIO (PREMIUM) ---
+        let caption = `<b>${tiempo}</b>\n\n📖 <b>Evangelio:</b>\n${evangelio}`;
+        if (caption.length > 1024) caption = caption.substring(0, 1020) + "...";
         
         response = await fetch(`${TELEGRAM_API}/sendAudio`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ 
             chat_id: config.telegramId, 
-            audio: data.audioUrl, 
+            audio: audio, 
             caption: caption,
             parse_mode: "HTML"
           }),
         });
       } else {
-        // --- LÓGICA GRATUITA: TODO EN TEXTO (Límite 4096 chars) ---
-        const fullText = `<b>${data.tiempo_liturgico}</b>\n\n📖 <b>Evangelio:</b>\n${data.evangelio}\n\n🧠 <b>Reflexión:</b>\n${data.reflexion}`;
+        // --- ENVÍO TEXTO (FREE) ---
+        const fullText = `<b>${tiempo}</b>\n\n📖 <b>Evangelio:</b>\n${evangelio}\n\n🧠 <b>Reflexión:</b>\n${reflexion}`;
         
         response = await fetch(`${TELEGRAM_API}/sendMessage`, {
           method: "POST",
@@ -75,17 +77,12 @@ export default async function handler(req, res) {
         });
       }
 
-      const resData = await response.json();
       if (!response.ok) {
-        report.push({ canal: config.name, status: "error", detalle: resData.description });
+        const errorText = await response.text();
+        report.push({ canal: config.name, status: "error", detalle: errorText });
       } else {
         report.push({ canal: config.name, status: "exito" });
       }
-    }
-
-    // Actualizamos Firestore solo si hubo éxito en el canal Premium
-    if (report.find(r => r.canal === "Premium" && r.status === "exito")) {
-      await contentDoc.ref.update({ sent: true, sentAt: new Date().toISOString() });
     }
 
     return res.status(200).json({ resultados: report });
@@ -95,7 +92,7 @@ export default async function handler(req, res) {
       await fetch(`${TELEGRAM_API}/sendMessage`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chat_id: ADMIN_ID, text: `🚨 <b>ERROR CRON:</b> ${error.message}`, parse_mode: "HTML" }),
+        body: JSON.stringify({ chat_id: ADMIN_ID, text: `🚨 ERROR EN TEST: ${error.message}` }),
       });
     }
     return res.status(500).json({ error: error.message });
