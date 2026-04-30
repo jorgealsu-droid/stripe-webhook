@@ -6,7 +6,10 @@ export default async function handler(req, res) {
   try {
     const update = req.body;
     const TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
-    const CHANNEL_ID = "-1003524006612";
+    
+    // Extraemos los IDs desde las variables de entorno para mayor escalabilidad
+    const PREMIUM_CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID_PREMIUM;
+    const FREE_CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID_FREE;
 
     // --- 1. MANEJAR CLICS EN BOTONES (CALLBACK QUERIES) ---
     if (update.callback_query) {
@@ -15,6 +18,47 @@ export default async function handler(req, res) {
       const telegramId = String(callbackQuery.from.id);
       const data = callbackQuery.data;
       const firstName = callbackQuery.from.first_name || "Amigo";
+
+      // NUEVO: Lógica para acceso gratuito
+      if (data === "free_access") {
+        await db.collection('users').doc(telegramId).update({ 
+          status: "free",
+          state: "normal" 
+        });
+
+        const linkResponse = await fetch(`${TELEGRAM_API}/createChatInviteLink`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: FREE_CHANNEL_ID,
+            member_limit: 1,
+            name: `Gratuito: ${telegramId}`
+          }),
+        });
+        
+        const linkData = await linkResponse.json();
+
+        if (linkData.ok) {
+          await fetch(`${TELEGRAM_API}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `✅ <b>Acceso concedido</b>\n\nÚnete al canal público usando este enlace:\n\n${linkData.result.invite_link}`,
+              parse_mode: "HTML"
+            }),
+          });
+        } else {
+          await fetch(`${TELEGRAM_API}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: "⚠️ <b>Error técnico.</b>\n\nHubo un fallo al generar tu invitación al canal gratuito. Intenta de nuevo usando /start"
+            }),
+          });
+        }
+      }
 
       if (data === "enter_coupon") {
         await db.collection('users').doc(telegramId).update({ state: "awaiting_coupon" });
@@ -33,13 +77,21 @@ export default async function handler(req, res) {
         const userDoc = await db.collection('users').doc(telegramId).get();
         const userData = userDoc.exists ? userDoc.data() : null;
 
-        if (!userData || (userData.status !== "premium" && userData.status !== "premium_coupon")) {
+        // Evaluamos a qué canal tiene derecho el usuario
+        let targetChannel = null;
+        if (userData && (userData.status === "premium" || userData.status === "premium_coupon")) {
+          targetChannel = PREMIUM_CHANNEL_ID;
+        } else if (userData && userData.status === "free") {
+          targetChannel = FREE_CHANNEL_ID;
+        }
+
+        if (!targetChannel) {
           await fetch(`${TELEGRAM_API}/sendMessage`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               chat_id: chatId,
-              text: "❌ <b>Acceso denegado.</b>\n\nNo tienes una suscripción activa.",
+              text: "❌ <b>Acceso denegado.</b>\n\nNo tienes una suscripción ni registro activo.",
               parse_mode: "HTML"
             }),
           });
@@ -48,7 +100,7 @@ export default async function handler(req, res) {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              chat_id: CHANNEL_ID,
+              chat_id: targetChannel,
               member_limit: 1,
               name: `Recuperación: ${telegramId}`
             }),
@@ -66,26 +118,17 @@ export default async function handler(req, res) {
                 parse_mode: "HTML"
               }),
             });
-          } else {
-            await fetch(`${TELEGRAM_API}/sendMessage`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                chat_id: chatId,
-                text: "⚠️ <b>Error técnico.</b>\n\nHubo un fallo al generar tu invitación."
-              }),
-            });
           }
         }
       }
 
-      // Manejador para cuando el usuario decide cancelar el reintento de pago
       if (data === "main_menu") {
         await db.collection('users').doc(telegramId).update({ state: "normal" });
         const defaultKeyboard = {
           inline_keyboard: [
             [{ text: "💳 Acceso Premium", url: `${process.env.BASE_URL}/api/create-checkout?telegram_id=${telegramId}` }],
-            [{ text: "🎁 Acceso con cupón", callback_data: "enter_coupon" }]
+            [{ text: "🎁 Acceso con cupón", callback_data: "enter_coupon" }],
+            [{ text: "🟢 Acceso Gratuito", callback_data: "free_access" }]
           ],
         };
         await fetch(`${TELEGRAM_API}/sendMessage`, {
@@ -185,7 +228,7 @@ export default async function handler(req, res) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            chat_id: CHANNEL_ID,
+            chat_id: PREMIUM_CHANNEL_ID,
             member_limit: 1,
             name: `Cupón: ${rawText}`
           }),
@@ -194,10 +237,9 @@ export default async function handler(req, res) {
         const linkData = await linkResponse.json();
 
         if (linkData.ok) {
-          await sendMessage(`✅ <b>¡Cupón canjeado con éxito!</b>\n\nÚnete al canal privado usando este enlace único (solo funcionará una vez):\n\n${linkData.result.invite_link}`);
+          await sendMessage(`✅ <b>¡Cupón canjeado con éxito!</b>\n\nÚnete al canal privado usando este enlace único:\n\n${linkData.result.invite_link}`);
         } else {
           await sendMessage("⚠️ Tu cupón es válido, pero hubo un error al generar la invitación. Contacta a soporte.");
-          console.error("Error Telegram API:", linkData);
         }
         
         return res.status(200).send("OK");
@@ -223,18 +265,19 @@ export default async function handler(req, res) {
         await userRef.update({ state: "normal" });
       }
 
-      if (userData.status === "premium" || userData.status === "premium_coupon") {
+      if (userData.status === "premium" || userData.status === "premium_coupon" || userData.status === "free") {
         const premiumKeyboard = {
           inline_keyboard: [
             [{ text: "🔑 Recuperar acceso al canal", callback_data: "recover_access" }]
           ]
         };
-        await sendMessage(`¡Hola de nuevo, <b>${firstName}</b>! 🌿\n\nTu suscripción está activa. Si necesitas entrar al canal privado de nuevo, genera una invitación aquí:`, premiumKeyboard);
+        await sendMessage(`¡Hola de nuevo, <b>${firstName}</b>! 🌿\n\nTu suscripción está activa. Si necesitas entrar al canal de nuevo, genera una invitación aquí:`, premiumKeyboard);
       } else {
         const defaultKeyboard = {
           inline_keyboard: [
             [{ text: "💳 Acceso Premium", url: `${process.env.BASE_URL}/api/create-checkout?telegram_id=${telegramId}` }],
-            [{ text: "🎁 Acceso con cupón", callback_data: "enter_coupon" }]
+            [{ text: "🎁 Acceso con cupón", callback_data: "enter_coupon" }],
+            [{ text: "🟢 Acceso Gratuito", callback_data: "free_access" }]
           ],
         };
         await sendMessage(`¡Hola <b>${firstName}</b>! 🌿\n\nBienvenido. Elige cómo deseas acceder:`, defaultKeyboard);
