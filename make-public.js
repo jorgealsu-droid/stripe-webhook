@@ -1,45 +1,45 @@
 import { Storage } from '@google-cloud/storage';
 
-// Inicia Storage usando tu llave JSON local
+// 1. Configuración para Producción
 const storage = new Storage({ 
-  keyFilename: './service-account-testing.json' 
+  keyFilename: './service-account-produccion.json' 
 });
 
-const bucketName = 'telegram-test-6efe1';
+const bucketName = 'evangelio-telegram.firebasestorage.app';
 const bucket = storage.bucket(bucketName);
 
-async function makePublic() {
-  console.log('--- INICIANDO ACTUALIZACIÓN DE METADATOS Y PERMISOS ---');
+async function aplicarPermisosProduccion() {
+  console.log('🏗️  Iniciando aplicación de permisos en PRODUCCIÓN...');
   
   try {
+    // Buscamos los archivos en la carpeta /audios
     const [files] = await bucket.getFiles({ prefix: 'audios/' });
 
     if (files.length === 0) {
-      console.log('No se encontraron archivos en la carpeta audios/.');
+      console.log('❌ Error: No se encontraron archivos en la carpeta /audios del bucket de producción.');
       return;
     }
 
-    console.log(`Procesando ${files.length} archivos...`);
+    console.log(`📡 Se encontraron ${files.length} archivos. Haciéndolos públicos...`);
 
     for (const file of files) {
       if (file.name.endsWith('.mp3')) {
-        // 1. Forzamos el tipo de contenido para que sea reconocido como audio
+        // Asignamos el tipo de contenido y el acceso público
         await file.setMetadata({
           contentType: 'audio/mpeg',
           cacheControl: 'public, max-age=31536000',
         });
 
-        // 2. Lo hacemos público
+        // Este es el paso que elimina el error "AccessDenied"
         await file.makePublic();
-        
-        console.log(`✅ Actualizado: ${file.name}`);
+        console.log(`✅ Público: ${file.name}`);
       }
     }
     
-    console.log('--- PROCESO FINALIZADO CON ÉXITO ---');
+    console.log('🏁 PROCESO COMPLETADO: Todos los audios de producción son ahora accesibles.');
   } catch (error) {
-    console.error('❌ Error durante el proceso:', error.message);
+    console.error('❌ Error crítico en el script:', error.message);
   }
 }
 
-makePublic().catch(console.error);
+aplicarPermisosProduccion().catch(console.error);
