@@ -1,6 +1,7 @@
 import db, { sendLog } from './firebase.js';
 
 export default async function handler(req, res) {
+  // 1. Validación de seguridad del Cron Job
   const authHeader = req.headers.authorization;
   if (!authHeader || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return res.status(401).json({ error: "No autorizado" });
@@ -22,33 +23,47 @@ export default async function handler(req, res) {
     }
 
     const data = doc.data();
-    const mensaje = `📖 <b>${data.titulo}</b>\n\n${data.texto}`;
+    
+    // Armamos el bloque de texto estándar (común para ambos)
+    const textoBase = `✝️ <b>${data.tiempo_liturgico}</b>\n\n${data.evangelio}`;
 
-    // Función auxiliar para enviar y alertar errores
-    const enviarContenido = async (channelId, label) => {
-      const response = await fetch(`${TELEGRAM_API}/sendAudio`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: channelId,
-          audio: data.audioUrl,
-          caption: mensaje,
-          parse_mode: "HTML"
-        }),
-      });
+    // --- ENVÍO CANAL PREMIUM (Audio + Texto como Caption) ---
+    const premiumRes = await fetch(`${TELEGRAM_API}/sendAudio`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: PREMIUM_CHANNEL,
+        audio: data.audioUrl,
+        caption: textoBase,
+        parse_mode: "HTML"
+      }),
+    });
+    const premiumData = await premiumRes.json();
+    if (!premiumData.ok) {
+      await sendLog(`⚠️ <b>FALLO DE ENVÍO [Premium]:</b> ${premiumData.description}`);
+    }
 
-      const resJson = await response.json();
-      if (!resJson.ok) {
-        await sendLog(`⚠️ <b>FALLO DE ENVÍO [${label}]:</b>\nError: ${resJson.description}`);
-        return { status: "error", error: resJson.description };
-      }
-      return { status: "exito" };
-    };
+    // --- ENVÍO CANAL FREE (Solo Texto) ---
+    const freeRes = await fetch(`${TELEGRAM_API}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: FREE_CHANNEL,
+        text: textoBase,
+        parse_mode: "HTML"
+      }),
+    });
+    const freeData = await freeRes.json();
+    if (!freeData.ok) {
+      await sendLog(`⚠️ <b>FALLO DE ENVÍO [Gratuito]:</b> ${freeData.description}`);
+    }
 
-    const resPremium = await enviarContenido(PREMIUM_CHANNEL, "Premium");
-    const resFree = await enviarContenido(FREE_CHANNEL, "Gratuito");
-
-    return res.status(200).json({ resultados: [resPremium, resFree] });
+    return res.status(200).json({ 
+      resultados: [
+        { canal: "Premium", status: premiumData.ok ? "exito" : "error", detalle: premiumData.description || null },
+        { canal: "Gratuito", status: freeData.ok ? "exito" : "error", detalle: freeData.description || null }
+      ] 
+    });
 
   } catch (error) {
     await sendLog(`🚨 <b>ERROR CRÍTICO EN CRON:</b>\n${error.message}`);
