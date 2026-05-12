@@ -3,4 +3,4 @@ node_modules
 .vercel
 llave-firebase.json
 service-account-testing.json
-*.json
+.DS_Store
